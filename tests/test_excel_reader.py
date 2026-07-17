@@ -15,12 +15,12 @@ def test_read_input_excel():
 
     assert data.coil.width_mm == 1250
 
-    assert data.coil.weight_kg == 3000
+    assert data.coil.weight_kg == 20000
 
     assert len(data.orders) == 2
 
-    assert data.orders[0].width_mm == 135
+    assert data.orders[0].width_mm == 232
 
-    assert data.orders[1].width_mm == 87
+    assert data.orders[1].width_mm == 112
 
     assert data.settings.max_knives == 12
