@@ -17,4 +17,9 @@ output/
 *.log
 
 # Excel temporary files
-~$*.xlsx
+~$*.xlsxnode_modules/
+desktop/node_modules/
+frontend/node_modules/
+desktop/dist/
+desktop/release/
+frontend/dist/
