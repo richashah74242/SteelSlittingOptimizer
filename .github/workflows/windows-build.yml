@@ -1,0 +1,65 @@
+name: Build Windows App
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Python dependencies
+        run: |
+          pip install fastapi
+          pip install uvicorn
+          pip install pydantic
+          pip install pyinstaller
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm install
+          npm run build
+
+      - name: Build backend
+        run: |
+          pyinstaller `
+            --onefile `
+            --name steel-slitting-backend `
+            --paths . `
+            backend/run.py
+
+      - name: Prepare backend
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path backend/dist
+          Copy-Item dist/steel-slitting-backend.exe backend/dist/
+
+      - name: Install Electron dependencies
+        working-directory: desktop
+        run: |
+          npm install
+
+      - name: Build Windows installer
+        working-directory: desktop
+        run: |
+          npm run build -- --win
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Steel-Slitting-Optimizer-Windows
+          path: desktop/dist/*.exe

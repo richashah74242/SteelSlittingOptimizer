@@ -35,57 +35,22 @@ def print_counter(
         )
 
 
-def main():
-
-    input_file = Path(
-        "templates/input.xlsx"
-    )
-
-    data = read_input_excel(
-        input_file
-    )
-
-    optimizer = SlittingOptimizer(
-        data
-    )
-
-    plan = optimizer.optimize()
+def print_plan(
+    plan,
+    scenario_number: int,
+):
 
     print()
 
     print("=" * 70)
 
     print(
-        "STEEL SLITTING OPTIMIZATION RESULT"
+        f"SCENARIO {scenario_number}"
     )
 
     print("=" * 70)
 
     print()
-
-    print("RAW COIL")
-
-    print("-" * 70)
-
-    print(
-        f"Thickness: "
-        f"{data.coil.thickness_mm} mm"
-    )
-
-    print(
-        f"Width: "
-        f"{data.coil.width_mm} mm"
-    )
-
-    print(
-        f"Weight: "
-        f"{data.coil.weight_kg:.2f} kg"
-    )
-
-    print(
-        f"Kerf: "
-        f"{data.coil.kerf_mm:.2f} mm"
-    )
 
     print_counter(
         "CUSTOMER MATERIAL",
@@ -105,7 +70,7 @@ def main():
 
     print(
         f"Customer + stock width: "
-        f"{plan.used_width_mm - plan.kerf_width_mm:.2f} mm"
+        f"{plan.product_width_mm:.2f} mm"
     )
 
     print(
@@ -120,7 +85,14 @@ def main():
 
     print(
         f"Remaining scrap width: "
-        f"{plan.scrap_width_mm:.2f} mm"
+        f"{plan.unused_width_mm:.2f} mm"
+    )
+
+    print()
+
+    print(
+        f"Running length: "
+        f"{plan.running_length_m:.2f} m"
     )
 
     print()
@@ -153,6 +125,87 @@ def main():
         f"Total produced material: "
         f"{plan.total_produced_weight_kg:.2f} kg"
     )
+
+    print()
+
+    print(
+        f"Total raw material weight: "
+        f"{plan.total_raw_material_weight_kg:.2f} kg"
+    )
+
+
+def main():
+
+    input_file = Path(
+        "templates/input.xlsx"
+    )
+
+    data = read_input_excel(
+        input_file
+    )
+
+    optimizer = SlittingOptimizer(
+        data
+    )
+
+    plans = optimizer.optimize(
+        top_n=10
+    )
+
+    print()
+
+    print("=" * 70)
+
+    print(
+        "STEEL SLITTING OPTIMIZATION RESULTS"
+    )
+
+    print("=" * 70)
+
+    print()
+
+    print("RAW COIL")
+
+    print("-" * 70)
+
+    print(
+        f"Thickness: "
+        f"{data.coil.thickness_mm} mm"
+    )
+
+    print(
+        f"Width: "
+        f"{data.coil.width_mm} mm"
+    )
+
+    if data.coil.weight_kg is None:
+
+        print(
+            "Weight: Calculated from "
+            "required customer material"
+        )
+
+    else:
+
+        print(
+            f"Weight: "
+            f"{data.coil.weight_kg:.2f} kg"
+        )
+
+    print(
+        f"Kerf: "
+        f"{data.coil.kerf_mm:.2f} mm"
+    )
+
+    for index, plan in enumerate(
+        plans,
+        start=1,
+    ):
+
+        print_plan(
+            plan,
+            index,
+        )
 
     print()
 

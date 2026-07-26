@@ -1,112 +1,48 @@
-from math import ceil
+from .models import Coil
 
-from .models import Coil, Order
+
+STEEL_DENSITY_KG_PER_M3 = 7850.0
 
 
 class WeightEngine:
-    """
-    Handles all weight-related calculations.
 
-    The basic assumption is that every slit strip runs
-    through the full usable coil length.
+    def __init__(
+        self,
+        coil: Coil,
+    ):
 
-    Therefore:
-
-        Strip Weight =
-            Strip Width / Coil Width
-            × Coil Weight
-    """
-
-    def __init__(self, coil: Coil):
         self.coil = coil
+
+    def weight_per_meter(
+        self,
+        width_mm: int,
+    ) -> float:
+
+        width_m = (
+            width_mm
+            / 1000.0
+        )
+
+        thickness_m = (
+            self.coil.thickness_mm
+            / 1000.0
+        )
+
+        return (
+            width_m
+            * thickness_m
+            * STEEL_DENSITY_KG_PER_M3
+        )
 
     def weight_for_width(
         self,
         width_mm: int,
+        length_m: float,
     ) -> float:
-        """
-        Calculate the weight of one full-width strip.
-        """
 
         return (
-            width_mm
-            / self.coil.width_mm
-            * self.coil.weight_kg
-        )
-
-    def strips_required(
-        self,
-        order: Order,
-    ) -> int:
-        """
-        Calculate the minimum number of strips
-        required to meet the requested weight.
-        """
-
-        strip_weight = self.weight_for_width(
-            order.width_mm
-        )
-
-        return ceil(
-            order.required_weight_kg
-            / strip_weight
-        )
-
-    def produced_weight(
-        self,
-        width_mm: int,
-        number_of_strips: int,
-    ) -> float:
-        """
-        Calculate total production weight.
-        """
-
-        return (
-            self.weight_for_width(width_mm)
-            * number_of_strips
-        )
-
-    def overproduction_weight(
-        self,
-        order: Order,
-        number_of_strips: int,
-    ) -> float:
-        """
-        Calculate production above the requested weight.
-        """
-
-        produced = self.produced_weight(
-            order.width_mm,
-            number_of_strips,
-        )
-
-        return max(
-            0.0,
-            produced
-            - order.required_weight_kg,
-        )
-
-    def overproduction_percent(
-        self,
-        order: Order,
-        number_of_strips: int,
-    ) -> float:
-        """
-        Calculate overproduction percentage.
-        """
-
-        if order.required_weight_kg == 0:
-            return 0.0
-
-        overproduction = (
-            self.overproduction_weight(
-                order,
-                number_of_strips,
+            self.weight_per_meter(
+                width_mm
             )
-        )
-
-        return (
-            overproduction
-            / order.required_weight_kg
-            * 100
+            * length_m
         )

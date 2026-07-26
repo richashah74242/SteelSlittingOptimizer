@@ -6,7 +6,7 @@ from typing import List
 class Coil:
     thickness_mm: float
     width_mm: int
-    weight_kg: float
+    weight_kg: float | None
     kerf_mm: float
 
 
