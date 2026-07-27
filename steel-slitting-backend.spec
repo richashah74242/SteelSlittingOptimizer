@@ -2,8 +2,8 @@
 
 
 a = Analysis(
-    ['backend/run.py'],
-    pathex=['.'],
+    ['backend/main.py'],
+    pathex=[],
     binaries=[],
     datas=[],
     hiddenimports=[],

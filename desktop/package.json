@@ -4,30 +4,39 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder"
+    "dist:win": "electron-builder --win --x64"
   },
-  "build": {
-    "appId": "com.steelslitting.optimizer",
-    "productName": "Steel Slitting Optimizer",
+  "devDependencies": {
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.0"
+  },
+"build": {
+  "appId": "com.steelslitting.optimizer",
+  "productName": "Steel Slitting Optimizer",
 
-    "directories": {
-      "output": "dist"
-    },
+  "asar": true,
 
-    "files": [
-      "main.js",
-      "../frontend/dist/**/*"
-    ],
+  "files": [
+    "main.js",
+    "../frontend/dist/**/*"
+  ],
 
-    "extraResources": [
-      {
-        "from": "../backend/dist/steel-slitting-backend.exe",
-        "to": "backend/steel-slitting-backend.exe"
-      }
-    ],
-
-    "win": {
-      "target": "nsis"
+  "extraResources": [
+    {
+      "from": "backend",
+      "to": "backend"
     }
+  ],
+
+  "win": {
+    "target": "nsis"
+  },
+
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true
   }
+}
 }

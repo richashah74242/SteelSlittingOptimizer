@@ -1,14 +1,19 @@
-name: Build Windows App
+name: Build Windows Installer
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
-  build:
+  build-windows:
+
     runs-on: windows-latest
 
     steps:
-      - name: Checkout
+
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Python
@@ -16,50 +21,44 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Backend
+        run: |
+          pyinstaller steel-slitting-backend.spec
+
+      - name: Copy backend into Electron
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force desktop\backend
+          Copy-Item dist\steel-slitting-backend.exe desktop\backend\steel-slitting-backend.exe
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Install Python dependencies
-        run: |
-          pip install fastapi
-          pip install uvicorn
-          pip install pydantic
-          pip install pyinstaller
+      - name: Install Electron dependencies
+        working-directory: desktop
+        run: npm install
 
-      - name: Build frontend
+      - name: Build React
         working-directory: frontend
         run: |
           npm install
           npm run build
 
-      - name: Build backend
-        run: |
-          pyinstaller `
-            --onefile `
-            --name steel-slitting-backend `
-            --paths . `
-            backend/run.py
-
-      - name: Prepare backend
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path backend/dist
-          Copy-Item dist/steel-slitting-backend.exe backend/dist/
-
-      - name: Install Electron dependencies
+      - name: Build Windows Installer
         working-directory: desktop
-        run: |
-          npm install
+        run: npm run dist:win
 
-      - name: Build Windows installer
-        working-directory: desktop
-        run: |
-          npm run build -- --win
-
-      - name: Upload Windows installer
+      - name: Upload Installer
         uses: actions/upload-artifact@v4
         with:
-          name: Steel-Slitting-Optimizer-Windows
-          path: desktop/dist/*.exe
+          name: SteelSlittingOptimizer-Windows
+          path: |
+            desktop/dist/*.exe
