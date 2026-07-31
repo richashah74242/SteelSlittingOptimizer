@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-
+print("********** BACKEND LOADED **********")
 app = FastAPI(
     title="Steel Slitting Optimizer API",
     version="1.0.0",
