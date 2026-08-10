@@ -14,16 +14,8 @@ class OrderRequest(BaseModel):
 
 class OptimizeRequest(BaseModel):
 
-    thickness_mm: float = Field(
-        gt=0
-    )
-
     coil_width_mm: int = Field(
         gt=0
-    )
-
-    kerf_mm: float = Field(
-        ge=0
     )
 
     coil_weight_kg: float | None = Field(

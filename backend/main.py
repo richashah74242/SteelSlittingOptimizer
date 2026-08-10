@@ -52,10 +52,10 @@ def optimize(
     try:
 
         coil = Coil(
-            thickness_mm=request.thickness_mm,
+            thickness_mm=0.8,
             width_mm=request.coil_width_mm,
             weight_kg=request.coil_weight_kg,
-            kerf_mm=request.kerf_mm,
+            kerf_mm=5,
         )
 
         orders = [
