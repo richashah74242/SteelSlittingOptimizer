@@ -12,10 +12,9 @@ function App() {
   ]);
 
   const [stockWidths, setStockWidths] = useState(
-    "40,110,144,232,206"
+    "40,110,112,144,206,232"
   );
 
-  const [topN, setTopN] = useState(10);
   const [scenarios, setScenarios] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -51,40 +50,91 @@ function App() {
   }
 
   /*
-   * Combine customer and stock material having
-   * the same width.
+   * ============================================================
+   * CALCULATE DISPLAY MATERIAL
+   * ============================================================
+   *
+   * Customer + stock strips having the same width are combined.
+   *
+   * Example:
+   *
+   * 40 × 3   = 120 mm
+   * 110 × 2  = 220 mm
+   * 112 × 1  = 112 mm
+   * 144 × 1  = 144 mm
+   * 206 × 2  = 412 mm
+   * 232 × 1  = 232 mm
+   *
+   * Total produced width = 1240 mm
+   *
+   * Coil width = 1250 mm
+   *
+   * Scrap = 1250 - 1240 = 10 mm
+   *
+   * IMPORTANT:
+   *
+   * Material weights are calculated using:
+   *
+   *     material width / total produced width
+   *
+   * So:
+   *
+   * 40 mm × 3 = 120 mm
+   *
+   * 25833.33 × 120 / 1240
+   *
+   * = 2500 kg
+   *
+   * Scrap is calculated separately from the scrap width.
    */
   function getProducedMaterial(scenario) {
     const materialMap = new Map();
 
-    const addMaterial = (items) => {
-      items
-        .filter((item) => item.strips > 0)
+    function addMaterial(items) {
+      (items || [])
+        .filter(
+          (item) =>
+            Number(item.strips || 0) > 0
+        )
         .forEach((item) => {
+          const width = Number(
+            item.width_mm || 0
+          );
+
+          const strips = Number(
+            item.strips || 0
+          );
+
+          if (width <= 0 || strips <= 0) {
+            return;
+          }
+
           const existing =
-            materialMap.get(item.width_mm) || {
-              width_mm: item.width_mm,
+            materialMap.get(width) || {
+              width_mm: width,
               strips: 0,
-              typeWidth: 0,
             };
 
-          existing.strips += item.strips;
+          existing.strips += strips;
 
           materialMap.set(
-            item.width_mm,
+            width,
             existing
           );
         });
-    };
+    }
 
     addMaterial(
-      scenario.customer_material || []
+      scenario.customer_material
     );
 
     addMaterial(
-      scenario.stock_material || []
+      scenario.stock_material
     );
 
+    /*
+     * Sort by width.
+     */
     const materials = Array.from(
       materialMap.values()
     ).sort(
@@ -93,14 +143,32 @@ function App() {
     );
 
     /*
-     * Backend gives us customer and stock total
-     * weights. Since every strip in a scenario has
-     * the same running length and thickness,
-     * weight is proportional to width × strips.
+     * ============================================================
+     * TOTAL PRODUCED WIDTH
+     * ============================================================
+     */
+    const totalWidthUsed =
+      materials.reduce(
+        (total, item) =>
+          total +
+          item.width_mm *
+            item.strips,
+        0
+      );
+
+    /*
+     * ============================================================
+     * TOTAL PRODUCED MATERIAL WEIGHT
+     * ============================================================
      *
-     * Therefore we can derive the individual
-     * displayed weight without changing backend
-     * weight calculations.
+     * This is customer + stock material.
+     *
+     * Example:
+     *
+     * customer = 7296 kg
+     * stock    = 18537.33 kg
+     *
+     * total = 25833.33 kg
      */
     const totalProducedWeight =
       Number(
@@ -110,31 +178,148 @@ function App() {
         scenario.stock_weight_kg || 0
       );
 
-    const totalWidth = materials.reduce(
-      (total, item) =>
-        total +
-        item.width_mm * item.strips,
-      0
-    );
+    /*
+     * ============================================================
+     * INDIVIDUAL MATERIAL WEIGHT
+     * ============================================================
+     *
+     * Weight is proportional to width.
+     *
+     * Example:
+     *
+     * 40 × 3 = 120 mm
+     *
+     * weight =
+     *
+     * 25833.33 × 120 / 1240
+     *
+     * = 2500 kg
+     */
+    const materialsWithWeight =
+      materials.map((item) => {
+        const materialWidth =
+          item.width_mm *
+          item.strips;
 
-    return materials.map((item) => {
-      const materialWidth =
-        item.width_mm * item.strips;
+        const weight =
+          totalWidthUsed > 0
+            ? (
+                totalProducedWeight *
+                materialWidth /
+                totalWidthUsed
+              )
+            : 0;
 
-      const weight =
-        totalWidth > 0
-          ? (
-              totalProducedWeight *
-              materialWidth /
-              totalWidth
-            )
-          : 0;
+        return {
+          ...item,
 
-      return {
-        ...item,
-        weight,
-      };
-    });
+          total_width_used:
+            materialWidth,
+
+          weight,
+        };
+      });
+
+    /*
+     * ============================================================
+     * COIL WIDTH
+     * ============================================================
+     */
+    const actualCoilWidth =
+      Number(
+        scenario.coil_width_mm ||
+          coilWidth ||
+          0
+      );
+
+    /*
+     * ============================================================
+     * SCRAP WIDTH
+     * ============================================================
+     *
+     * Scrap is the remaining part of the coil.
+     *
+     * 1250 - 1240 = 10 mm
+     *
+     * DO NOT add kerf again here.
+     *
+     * The table must satisfy:
+     *
+     * material width + scrap width = coil width
+     *
+     * 1240 + 10 = 1250
+     */
+    const scrapWidth =
+      actualCoilWidth > 0
+        ? Math.max(
+            0,
+            actualCoilWidth -
+              totalWidthUsed
+          )
+        : 0;
+
+    /*
+     * ============================================================
+     * SCRAP WEIGHT
+     * ============================================================
+     *
+     * Scrap weight is calculated using the same
+     * running-length basis as the produced material.
+     *
+     * Since:
+     *
+     * produced weight / produced width
+     *
+     * gives weight per mm of width,
+     *
+     * scrap weight =
+     *
+     * total produced weight
+     * × scrap width
+     * / total produced width
+     *
+     * Example:
+     *
+     * 25833.33 × 10 / 1240
+     *
+     * = 208.33 kg
+     */
+    const scrapWeight =
+      totalWidthUsed > 0
+        ? (
+            totalProducedWeight *
+            scrapWidth /
+            totalWidthUsed
+          )
+        : 0;
+
+    /*
+     * ============================================================
+     * TOTAL COIL WEIGHT
+     * ============================================================
+     *
+     * Material + scrap.
+     */
+    const totalCoilWeight =
+      totalProducedWeight +
+      scrapWeight;
+
+    return {
+      materials:
+        materialsWithWeight,
+
+      totalWidthUsed,
+
+      totalProducedWeight,
+
+      scrapWidth,
+
+      scrapWeight,
+
+      totalCoilWeight,
+
+      coilWidth: actualCoilWidth,
+    };
   }
 
   async function optimize() {
@@ -155,7 +340,9 @@ function App() {
         orders: orders.map(
           (order) => ({
             width_mm:
-              Number(order.width_mm),
+              Number(
+                order.width_mm
+              ),
 
             required_weight_kg:
               Number(
@@ -174,7 +361,7 @@ function App() {
               (width) => width > 0
             ),
 
-        top_n: Number(topN),
+        top_n: 6,
       };
 
       const API_URL =
@@ -191,7 +378,9 @@ function App() {
               "application/json",
           },
 
-          body: JSON.stringify(payload),
+          body: JSON.stringify(
+            payload
+          ),
         }
       );
 
@@ -206,7 +395,7 @@ function App() {
       }
 
       setScenarios(
-        data.scenarios
+        data.scenarios || []
       );
     } catch (error) {
       setError(error.message);
@@ -217,6 +406,10 @@ function App() {
 
   return (
     <div className="app">
+
+      {/* =====================================================
+          HEADER
+      ===================================================== */}
 
       <header className="header">
         <h1>
@@ -229,9 +422,12 @@ function App() {
         </p>
       </header>
 
+
       <main className="container">
 
-        {/* COIL DETAILS */}
+        {/* =====================================================
+            COIL DETAILS
+        ===================================================== */}
 
         <section className="card">
 
@@ -261,10 +457,12 @@ function App() {
 
             </div>
 
+
             <div className="input-group">
 
               <label>
                 Coil Weight (kg)
+
                 <span className="optional">
                   Optional
                 </span>
@@ -289,7 +487,10 @@ function App() {
 
         </section>
 
-        {/* CUSTOMER ORDERS */}
+
+        {/* =====================================================
+            CUSTOMER ORDERS
+        ===================================================== */}
 
         <section className="card">
 
@@ -308,6 +509,7 @@ function App() {
 
           </div>
 
+
           <div className="orders-header">
 
             <span>
@@ -321,6 +523,7 @@ function App() {
             <span></span>
 
           </div>
+
 
           {orders.map(
             (order, index) => (
@@ -346,6 +549,7 @@ function App() {
                   placeholder="e.g. 40"
                 />
 
+
                 <input
                   type="number"
                   min="0"
@@ -363,6 +567,7 @@ function App() {
                   placeholder="e.g. 2000"
                 />
 
+
                 {orders.length > 1 && (
 
                   <button
@@ -377,12 +582,16 @@ function App() {
                 )}
 
               </div>
+
             )
           )}
 
         </section>
 
-        {/* STOCK WIDTHS */}
+
+        {/* =====================================================
+            STOCK WIDTHS
+        ===================================================== */}
 
         <section className="card">
 
@@ -416,35 +625,10 @@ function App() {
 
         </section>
 
-        {/* OPTIMIZATION SETTINGS */}
 
-        <section className="card">
-
-          <h2>
-            Optimization Settings
-          </h2>
-
-          <div className="input-group">
-
-            <label>
-              Number of Scenarios
-            </label>
-
-            <input
-              type="number"
-              min="1"
-              max="100"
-              value={topN}
-              onChange={(event) =>
-                setTopN(
-                  event.target.value
-                )
-              }
-            />
-
-          </div>
-
-        </section>
+        {/* =====================================================
+            OPTIMIZE
+        ===================================================== */}
 
         <button
           className="optimize-button"
@@ -456,13 +640,21 @@ function App() {
             : "Optimize"}
         </button>
 
+
+        {/* =====================================================
+            ERROR
+        ===================================================== */}
+
         {error && (
           <div className="error">
             {error}
           </div>
         )}
 
-        {/* RESULTS */}
+
+        {/* =====================================================
+            RESULTS
+        ===================================================== */}
 
         {scenarios.length > 0 && (
 
@@ -472,13 +664,23 @@ function App() {
               Optimization Results
             </h2>
 
+
             {scenarios.map(
               (scenario, index) => {
 
-                const materials =
+                const {
+                  materials,
+                  totalWidthUsed,
+                  totalProducedWeight,
+                  scrapWidth,
+                  scrapWeight,
+                  totalCoilWeight,
+                  coilWidth: resultCoilWidth,
+                } =
                   getProducedMaterial(
                     scenario
                   );
+
 
                 const totalStrips =
                   materials.reduce(
@@ -488,25 +690,6 @@ function App() {
                     0
                   );
 
-                const totalProduced =
-                  Number(
-                    scenario.customer_weight_kg ||
-                      0
-                  ) +
-                  Number(
-                    scenario.stock_weight_kg ||
-                      0
-                  );
-
-                /*
-                 * Kerf is always 5 mm.
-                 * It is included in total scrap width.
-                 */
-                const totalScrapWidth =
-                  Number(
-                    scenario.unused_width_mm ||
-                      0
-                  ) + 5;
 
                 return (
 
@@ -514,6 +697,10 @@ function App() {
                     className="scenario-card"
                     key={index}
                   >
+
+                    {/* =================================================
+                        SCENARIO
+                    ================================================= */}
 
                     <div className="scenario-title">
 
@@ -523,7 +710,10 @@ function App() {
 
                     </div>
 
-                    {/* PRODUCED MATERIAL */}
+
+                    {/* =================================================
+                        PRODUCED MATERIAL
+                    ================================================= */}
 
                     <div className="material-section">
 
@@ -531,7 +721,10 @@ function App() {
                         Produced Material
                       </h4>
 
+
                       <div className="material-table">
+
+                        {/* HEADER */}
 
                         <div className="material-table-header">
 
@@ -544,10 +737,19 @@ function App() {
                           </span>
 
                           <span>
+                            Total Width Used
+                          </span>
+
+                          <span>
                             Weight
                           </span>
 
                         </div>
+
+
+                        {/* =================================================
+                            MATERIAL ROWS
+                        ================================================= */}
 
                         {materials.map(
                           (item) => (
@@ -563,9 +765,16 @@ function App() {
                                 {item.width_mm} mm
                               </span>
 
+
                               <span>
                                 {item.strips}
                               </span>
+
+
+                              <span>
+                                {item.total_width_used} mm
+                              </span>
+
 
                               <strong>
                                 {item.weight.toFixed(
@@ -578,7 +787,37 @@ function App() {
                           )
                         )}
 
-                        {/* TOTAL */}
+
+                        {/* =================================================
+                            SCRAP ROW
+                        ================================================= */}
+
+                        <div className="material-table-row scrap-row">
+
+                          <span>
+                            Scrap
+                          </span>
+
+                          <span>
+                            —
+                          </span>
+
+                          <span>
+                            {scrapWidth} mm
+                          </span>
+
+                          <strong>
+                            {scrapWeight.toFixed(
+                              2
+                            )} kg
+                          </strong>
+
+                        </div>
+
+
+                        {/* =================================================
+                            TOTAL ROW
+                        ================================================= */}
 
                         <div className="material-table-total">
 
@@ -591,7 +830,14 @@ function App() {
                           </strong>
 
                           <strong>
-                            {totalProduced.toFixed(
+                            {(
+                              totalWidthUsed +
+                              scrapWidth
+                            )} mm
+                          </strong>
+
+                          <strong>
+                            {totalCoilWeight.toFixed(
                               2
                             )} kg
                           </strong>
@@ -602,56 +848,10 @@ function App() {
 
                     </div>
 
-                    {/* FINAL SUMMARY */}
-
-                    <div className="summary-grid">
-
-                      <div>
-
-                        <span>
-                          Total Scrap Width
-                        </span>
-
-                        <strong>
-                          {totalScrapWidth} mm
-                        </strong>
-
-                      </div>
-
-                      <div>
-
-                        <span>
-                          Total Produced
-                        </span>
-
-                        <strong>
-                          {totalProduced.toFixed(
-                            2
-                          )} kg
-                        </strong>
-
-                      </div>
-
-                      <div>
-
-                        <span>
-                          Scrap Weight
-                        </span>
-
-                        <strong>
-                          {Number(
-                            scenario.scrap_weight_kg ||
-                              0
-                          ).toFixed(2)} kg
-                        </strong>
-
-                      </div>
-
-                    </div>
-
                   </div>
 
                 );
+
               }
             )}
 

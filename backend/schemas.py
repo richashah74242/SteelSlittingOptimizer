@@ -30,7 +30,7 @@ class OptimizeRequest(BaseModel):
     )
 
     top_n: int = Field(
-        default=10,
+        default=6,
         ge=1,
         le=100
     )

@@ -120,6 +120,7 @@ def _plan_to_response(plan):
             {
                 "width_mm": width,
                 "strips": count,
+                "total_width_used_mm": width * count,
             }
 
             for width, count
@@ -134,6 +135,7 @@ def _plan_to_response(plan):
             {
                 "width_mm": width,
                 "strips": count,
+                "total_width_used_mm": width * count,
             }
 
             for width, count
@@ -143,6 +145,9 @@ def _plan_to_response(plan):
                 if count > 0
         ],
 
+        "total_product_width_used_mm": (
+            plan.product_width_mm
+        ),
         "running_length_m": (
             round(
                 plan.running_length_m,
