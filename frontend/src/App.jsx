@@ -53,87 +53,70 @@ function App() {
    * ============================================================
    * CALCULATE DISPLAY MATERIAL
    * ============================================================
-   *
-   * Customer + stock strips having the same width are combined.
-   *
-   * Example:
-   *
-   * 40 × 3   = 120 mm
-   * 110 × 2  = 220 mm
-   * 112 × 1  = 112 mm
-   * 144 × 1  = 144 mm
-   * 206 × 2  = 412 mm
-   * 232 × 1  = 232 mm
-   *
-   * Total produced width = 1240 mm
-   *
-   * Coil width = 1250 mm
-   *
-   * Scrap = 1250 - 1240 = 10 mm
-   *
-   * IMPORTANT:
-   *
-   * Material weights are calculated using:
-   *
-   *     material width / total produced width
-   *
-   * So:
-   *
-   * 40 mm × 3 = 120 mm
-   *
-   * 25833.33 × 120 / 1240
-   *
-   * = 2500 kg
-   *
-   * Scrap is calculated separately from the scrap width.
    */
   function getProducedMaterial(scenario) {
     const materialMap = new Map();
 
-    function addMaterial(items) {
-      (items || [])
-        .filter(
-          (item) =>
-            Number(item.strips || 0) > 0
-        )
-        .forEach((item) => {
-          const width = Number(
-            item.width_mm || 0
-          );
+    /*
+     * ------------------------------------------------------------
+     * CUSTOMER MATERIAL
+     * ------------------------------------------------------------
+     */
+    (scenario.customer_material || [])
+      .filter((item) => Number(item.strips || 0) > 0)
+      .forEach((item) => {
+        const width = Number(item.width_mm || 0);
 
-          const strips = Number(
-            item.strips || 0
-          );
+        const existing =
+          materialMap.get(width) || {
+            width_mm: width,
+            strips: 0,
+            required_weight_kg: 0,
+            is_customer: false,
+          };
 
-          if (width <= 0 || strips <= 0) {
-            return;
-          }
+        existing.strips += Number(
+          item.strips || 0
+        );
 
-          const existing =
-            materialMap.get(width) || {
-              width_mm: width,
-              strips: 0,
-            };
+        existing.is_customer = true;
 
-          existing.strips += strips;
+        existing.required_weight_kg += Number(
+          item.required_weight_kg || 0
+        );
 
-          materialMap.set(
-            width,
-            existing
-          );
-        });
-    }
-
-    addMaterial(
-      scenario.customer_material
-    );
-
-    addMaterial(
-      scenario.stock_material
-    );
+        materialMap.set(width, existing);
+      });
 
     /*
-     * Sort by width.
+     * ------------------------------------------------------------
+     * STOCK MATERIAL
+     * ------------------------------------------------------------
+     */
+    (scenario.stock_material || [])
+      .filter((item) => Number(item.strips || 0) > 0)
+      .forEach((item) => {
+        const width = Number(item.width_mm || 0);
+
+        const existing =
+          materialMap.get(width) || {
+            width_mm: width,
+            strips: 0,
+            required_weight_kg: 0,
+            is_customer: false,
+          };
+
+        existing.strips += Number(
+          item.strips || 0
+        );
+
+        materialMap.set(width, existing);
+      });
+
+    /*
+     * ------------------------------------------------------------
+     * SORT MATERIALS BY WIDTH
+     * ------------------------------------------------------------
      */
     const materials = Array.from(
       materialMap.values()
@@ -143,9 +126,9 @@ function App() {
     );
 
     /*
-     * ============================================================
+     * ------------------------------------------------------------
      * TOTAL PRODUCED WIDTH
-     * ============================================================
+     * ------------------------------------------------------------
      */
     const totalWidthUsed =
       materials.reduce(
@@ -157,18 +140,11 @@ function App() {
       );
 
     /*
-     * ============================================================
-     * TOTAL PRODUCED MATERIAL WEIGHT
-     * ============================================================
+     * ------------------------------------------------------------
+     * ACTUAL PRODUCED WEIGHT
+     * ------------------------------------------------------------
      *
-     * This is customer + stock material.
-     *
-     * Example:
-     *
-     * customer = 7296 kg
-     * stock    = 18537.33 kg
-     *
-     * total = 25833.33 kg
+     * Customer + stock material.
      */
     const totalProducedWeight =
       Number(
@@ -179,21 +155,12 @@ function App() {
       );
 
     /*
-     * ============================================================
-     * INDIVIDUAL MATERIAL WEIGHT
-     * ============================================================
+     * ------------------------------------------------------------
+     * MATERIAL ACTUAL WEIGHTS
+     * ------------------------------------------------------------
      *
-     * Weight is proportional to width.
-     *
-     * Example:
-     *
-     * 40 × 3 = 120 mm
-     *
-     * weight =
-     *
-     * 25833.33 × 120 / 1240
-     *
-     * = 2500 kg
+     * Weight is distributed according to
+     * each material's share of produced width.
      */
     const materialsWithWeight =
       materials.map((item) => {
@@ -221,11 +188,15 @@ function App() {
       });
 
     /*
-     * ============================================================
-     * COIL WIDTH
-     * ============================================================
+     * ------------------------------------------------------------
+     * RESULT COIL WIDTH
+     * ------------------------------------------------------------
+     *
+     * IMPORTANT:
+     * Do NOT create a variable called "coilWidth"
+     * here because "coilWidth" already exists as React state.
      */
-    const actualCoilWidth =
+    const resultCoilWidth =
       Number(
         scenario.coil_width_mm ||
           coilWidth ||
@@ -233,76 +204,61 @@ function App() {
       );
 
     /*
-     * ============================================================
+     * ------------------------------------------------------------
      * SCRAP WIDTH
-     * ============================================================
-     *
-     * Scrap is the remaining part of the coil.
-     *
-     * 1250 - 1240 = 10 mm
-     *
-     * DO NOT add kerf again here.
-     *
-     * The table must satisfy:
-     *
-     * material width + scrap width = coil width
-     *
-     * 1240 + 10 = 1250
+     * ------------------------------------------------------------
      */
     const scrapWidth =
-      actualCoilWidth > 0
+      resultCoilWidth > 0
         ? Math.max(
             0,
-            actualCoilWidth -
+            resultCoilWidth -
               totalWidthUsed
           )
-        : 0;
+        : Number(
+            scenario.unused_width_mm ||
+              0
+          );
 
     /*
-     * ============================================================
+     * ------------------------------------------------------------
      * SCRAP WEIGHT
-     * ============================================================
+     * ------------------------------------------------------------
      *
-     * Scrap weight is calculated using the same
-     * running-length basis as the produced material.
+     * Prefer backend scrap weight.
      *
-     * Since:
-     *
-     * produced weight / produced width
-     *
-     * gives weight per mm of width,
-     *
-     * scrap weight =
-     *
-     * total produced weight
-     * × scrap width
-     * / total produced width
-     *
-     * Example:
-     *
-     * 25833.33 × 10 / 1240
-     *
-     * = 208.33 kg
+     * If backend does not provide it,
+     * calculate it from coil weight.
      */
-    const scrapWeight =
-      totalWidthUsed > 0
-        ? (
-            totalProducedWeight *
-            scrapWidth /
-            totalWidthUsed
-          )
-        : 0;
+    let scrapWeight = Number(
+      scenario.scrap_weight_kg || 0
+    );
+
+    if (
+      !scenario.scrap_weight_kg &&
+      coilWeight &&
+      resultCoilWidth > 0
+    ) {
+      scrapWeight =
+        Number(coilWeight) *
+        scrapWidth /
+        resultCoilWidth;
+    }
 
     /*
-     * ============================================================
-     * TOTAL COIL WEIGHT
-     * ============================================================
-     *
-     * Material + scrap.
+     * ------------------------------------------------------------
+     * TOTAL CUSTOMER REQUIRED WEIGHT
+     * ------------------------------------------------------------
      */
-    const totalCoilWeight =
-      totalProducedWeight +
-      scrapWeight;
+    const totalRequiredWeight =
+      materialsWithWeight.reduce(
+        (total, item) =>
+          total +
+          Number(
+            item.required_weight_kg || 0
+          ),
+        0
+      );
 
     return {
       materials:
@@ -312,22 +268,83 @@ function App() {
 
       totalProducedWeight,
 
+      totalRequiredWeight,
+
       scrapWidth,
 
       scrapWeight,
 
-      totalCoilWeight,
-
-      coilWidth: actualCoilWidth,
+      resultCoilWidth,
     };
   }
 
+  /*
+   * ============================================================
+   * OPTIMIZE
+   * ============================================================
+   */
   async function optimize() {
     setLoading(true);
     setError("");
     setScenarios([]);
 
     try {
+      /*
+       * Validate coil width.
+       */
+      if (
+        !coilWidth ||
+        Number(coilWidth) <= 0
+      ) {
+        throw new Error(
+          "Please enter a valid coil width."
+        );
+      }
+
+      /*
+       * Validate orders.
+       */
+      const validOrders =
+        orders.filter(
+          (order) =>
+            Number(order.width_mm) > 0 &&
+            Number(
+              order.required_weight_kg
+            ) >= 0
+        );
+
+      if (validOrders.length === 0) {
+        throw new Error(
+          "Please enter at least one valid customer order."
+        );
+      }
+
+      /*
+       * Parse stock widths.
+       */
+      const parsedStockWidths =
+        stockWidths
+          .split(",")
+          .map((width) =>
+            Number(width.trim())
+          )
+          .filter(
+            (width) => width > 0
+          );
+
+      if (
+        parsedStockWidths.length === 0
+      ) {
+        throw new Error(
+          "Please enter at least one stock width."
+        );
+      }
+
+      /*
+       * ----------------------------------------------------------
+       * API PAYLOAD
+       * ----------------------------------------------------------
+       */
       const payload = {
         coil_width_mm:
           Number(coilWidth),
@@ -337,7 +354,7 @@ function App() {
             ? Number(coilWeight)
             : null,
 
-        orders: orders.map(
+        orders: validOrders.map(
           (order) => ({
             width_mm:
               Number(
@@ -352,18 +369,16 @@ function App() {
         ),
 
         stock_widths_mm:
-          stockWidths
-            .split(",")
-            .map((width) =>
-              Number(width.trim())
-            )
-            .filter(
-              (width) => width > 0
-            ),
+          parsedStockWidths,
 
         top_n: 6,
       };
 
+      /*
+       * ----------------------------------------------------------
+       * API URL
+       * ----------------------------------------------------------
+       */
       const API_URL =
         import.meta.env.VITE_API_URL ||
         "http://127.0.0.1:8000";
@@ -384,6 +399,11 @@ function App() {
         }
       );
 
+      /*
+       * ----------------------------------------------------------
+       * READ RESPONSE
+       * ----------------------------------------------------------
+       */
       const data =
         await response.json();
 
@@ -394,11 +414,157 @@ function App() {
         );
       }
 
+      /*
+       * ----------------------------------------------------------
+       * GET SCENARIOS
+       * ----------------------------------------------------------
+       */
+      const receivedScenarios =
+        data.scenarios || [];
+
+      /*
+       * ----------------------------------------------------------
+       * SORT SCENARIOS
+       * ----------------------------------------------------------
+       *
+       * PRIORITY:
+       *
+       * 1. Lower scrap width
+       * 2. If scrap width is same:
+       *    lower scrap weight
+       * 3. If both are same:
+       *    lower customer overproduction
+       * 4. If still same:
+       *    lower total number of strips
+       *
+       * This means:
+       *
+       * Scenario A:
+       * Scrap = 10 mm
+       * Scrap weight = 250 kg
+       *
+       * Scenario B:
+       * Scrap = 10 mm
+       * Scrap weight = 200 kg
+       *
+       * Scenario B will be Scenario 1.
+       */
+      const sortedScenarios =
+        receivedScenarios
+          .map((scenario) => {
+            const display =
+              getProducedMaterial(
+                scenario
+              );
+
+            const customerOverproduction =
+              Math.max(
+                0,
+                Number(
+                  scenario.customer_weight_kg ||
+                    0
+                ) -
+                  display.totalRequiredWeight
+              );
+
+            const totalStrips =
+              display.materials.reduce(
+                (total, item) =>
+                  total +
+                  Number(
+                    item.strips || 0
+                  ),
+                0
+              );
+
+            return {
+              scenario,
+
+              sortScrapWidth:
+                Number(
+                  display.scrapWidth || 0
+                ),
+
+              sortScrapWeight:
+                Number(
+                  display.scrapWeight || 0
+                ),
+
+              sortOverproduction:
+                customerOverproduction,
+
+              sortTotalStrips:
+                totalStrips,
+            };
+          })
+
+          .sort((a, b) => {
+            /*
+             * 1. Scrap width
+             */
+            if (
+              a.sortScrapWidth !==
+              b.sortScrapWidth
+            ) {
+              return (
+                a.sortScrapWidth -
+                b.sortScrapWidth
+              );
+            }
+
+            /*
+             * 2. Scrap weight
+             */
+            if (
+              a.sortScrapWeight !==
+              b.sortScrapWeight
+            ) {
+              return (
+                a.sortScrapWeight -
+                b.sortScrapWeight
+              );
+            }
+
+            /*
+             * 3. Customer overproduction
+             */
+            if (
+              a.sortOverproduction !==
+              b.sortOverproduction
+            ) {
+              return (
+                a.sortOverproduction -
+                b.sortOverproduction
+              );
+            }
+
+            /*
+             * 4. Number of strips
+             */
+            return (
+              a.sortTotalStrips -
+              b.sortTotalStrips
+            );
+          })
+
+          .map(
+            (item) =>
+              item.scenario
+          );
+
       setScenarios(
-        data.scenarios || []
+        sortedScenarios
       );
     } catch (error) {
-      setError(error.message);
+      console.error(
+        "Optimization error:",
+        error
+      );
+
+      setError(
+        error.message ||
+          "Something went wrong while optimizing."
+      );
     }
 
     setLoading(false);
@@ -627,7 +793,7 @@ function App() {
 
 
         {/* =====================================================
-            OPTIMIZE
+            OPTIMIZE BUTTON
         ===================================================== */}
 
         <button
@@ -672,24 +838,33 @@ function App() {
                   materials,
                   totalWidthUsed,
                   totalProducedWeight,
+                  totalRequiredWeight,
                   scrapWidth,
                   scrapWeight,
-                  totalCoilWeight,
-                  coilWidth: resultCoilWidth,
+                  resultCoilWidth,
                 } =
                   getProducedMaterial(
                     scenario
                   );
 
-
+                /*
+                 * Total strips.
+                 */
                 const totalStrips =
                   materials.reduce(
                     (total, item) =>
                       total +
-                      item.strips,
+                      Number(
+                        item.strips || 0
+                      ),
                     0
                   );
 
+                /*
+                 * Actual total weight.
+                 */
+                const totalActualWeight =
+                  totalProducedWeight;
 
                 return (
 
@@ -699,7 +874,7 @@ function App() {
                   >
 
                     {/* =================================================
-                        SCENARIO
+                        SCENARIO TITLE
                     ================================================= */}
 
                     <div className="scenario-title">
@@ -741,24 +916,24 @@ function App() {
                           </span>
 
                           <span>
-                            Weight
+                            Required Weight
+                          </span>
+
+                          <span>
+                            Actual Weight
                           </span>
 
                         </div>
 
 
-                        {/* =================================================
-                            MATERIAL ROWS
-                        ================================================= */}
+                        {/* MATERIAL ROWS */}
 
                         {materials.map(
                           (item) => (
 
                             <div
                               className="material-table-row"
-                              key={
-                                item.width_mm
-                              }
+                              key={`${item.width_mm}-${item.is_customer}`}
                             >
 
                               <span>
@@ -772,14 +947,30 @@ function App() {
 
 
                               <span>
-                                {item.total_width_used} mm
+                                {
+                                  item.total_width_used
+                                }{" "}
+                                mm
+                              </span>
+
+
+                              <span>
+                                {item.is_customer &&
+                                Number(
+                                  item.required_weight_kg
+                                ) > 0
+                                  ? `${Number(
+                                      item.required_weight_kg
+                                    ).toFixed(2)} kg`
+                                  : "—"}
                               </span>
 
 
                               <strong>
-                                {item.weight.toFixed(
-                                  2
-                                )} kg
+                                {Number(
+                                  item.weight || 0
+                                ).toFixed(2)}{" "}
+                                kg
                               </strong>
 
                             </div>
@@ -803,13 +994,21 @@ function App() {
                           </span>
 
                           <span>
-                            {scrapWidth} mm
+                            {scrapWidth.toFixed(
+                              2
+                            )}{" "}
+                            mm
+                          </span>
+
+                          <span>
+                            —
                           </span>
 
                           <strong>
                             {scrapWeight.toFixed(
                               2
-                            )} kg
+                            )}{" "}
+                            kg
                           </strong>
 
                         </div>
@@ -830,16 +1029,24 @@ function App() {
                           </strong>
 
                           <strong>
-                            {(
-                              totalWidthUsed +
-                              scrapWidth
-                            )} mm
+                            {totalWidthUsed.toFixed(
+                              2
+                            )}{" "}
+                            mm
                           </strong>
 
                           <strong>
-                            {totalCoilWeight.toFixed(
+                            {totalRequiredWeight.toFixed(
                               2
-                            )} kg
+                            )}{" "}
+                            kg
+                          </strong>
+
+                          <strong>
+                            {totalActualWeight.toFixed(
+                              2
+                            )}{" "}
+                            kg
                           </strong>
 
                         </div>
@@ -848,10 +1055,53 @@ function App() {
 
                     </div>
 
+
+                    {/* =================================================
+                        COIL SUMMARY
+                    ================================================= */}
+
+                    <div className="coil-summary">
+
+                      <span>
+                        Coil Width
+                      </span>
+
+                      <strong>
+                        {resultCoilWidth.toFixed(
+                          2
+                        )}{" "}
+                        mm
+                      </strong>
+
+
+                      <span>
+                        Produced Width
+                      </span>
+
+                      <strong>
+                        {totalWidthUsed.toFixed(
+                          2
+                        )}{" "}
+                        mm
+                      </strong>
+
+
+                      <span>
+                        Scrap Width
+                      </span>
+
+                      <strong>
+                        {scrapWidth.toFixed(
+                          2
+                        )}{" "}
+                        mm
+                      </strong>
+
+                    </div>
+
                   </div>
 
                 );
-
               }
             )}
 

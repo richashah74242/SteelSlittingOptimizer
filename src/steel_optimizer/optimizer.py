@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from typing import Optional
 
 from .models import InputData
 from .weight_engine import WeightEngine
@@ -38,7 +39,6 @@ class SlittingPlan:
 
     @property
     def used_width_mm(self) -> int:
-
         return (
             self.product_width_mm
             + self.kerf_width_mm
@@ -46,14 +46,20 @@ class SlittingPlan:
 
     @property
     def scrap_width_mm(self) -> int:
-
-        return self.unused_width_mm
+        return (
+            self.unused_width_mm
+            + self.kerf_width_mm
+        )
 
     @property
     def distinct_stock_sizes(self) -> int:
-
         return len(
-            self.stock_widths
+            [
+                width
+                for width, count
+                in self.stock_widths.items()
+                if count > 0
+            ]
         )
 
 
@@ -80,6 +86,8 @@ class SlittingOptimizer:
             self.coil
         )
 
+        # A fixed coil width is always available in your
+        # application. This check is kept for safety.
         self.has_fixed_coil_width = (
             self.coil.width_mm > 0
         )
@@ -94,6 +102,10 @@ class SlittingOptimizer:
         else:
 
             self.usable_width = None
+
+    # =========================================================
+    # MAIN OPTIMIZATION
+    # =========================================================
 
     def optimize(
         self,
@@ -142,11 +154,9 @@ class SlittingOptimizer:
             self._generate_customer_options_fixed_width()
         )
 
-        plans = []
+        plans: list[SlittingPlan] = []
 
-        for customer_counts in (
-            customer_options
-        ):
+        for customer_counts in customer_options:
 
             customer_width = sum(
                 width * count
@@ -158,7 +168,6 @@ class SlittingOptimizer:
                 customer_width
                 > self.usable_width
             ):
-
                 continue
 
             remaining_width = (
@@ -174,31 +183,51 @@ class SlittingOptimizer:
 
             for stock_counts in stock_options:
 
-                plans.append(
-                    self._create_plan(
-                        customer_counts,
-                        stock_counts,
-                    )
+                stock_width = sum(
+                    width * count
+                    for width, count
+                    in stock_counts.items()
                 )
 
+                product_width = (
+                    customer_width
+                    + stock_width
+                )
+
+                if (
+                    product_width
+                    > self.usable_width
+                ):
+                    continue
+
+                plan = self._create_plan(
+                    customer_counts,
+                    stock_counts,
+                )
+
+                # A plan must actually produce something.
+                if plan.running_length_m <= 0:
+                    continue
+
+                plans.append(plan)
+
         return plans
+
+    # =========================================================
+    # CUSTOMER OPTIONS - FIXED WIDTH
+    # =========================================================
 
     def _generate_customer_options_fixed_width(
         self,
     ) -> list[Counter[int]]:
 
-        results = []
+        results: list[Counter[int]] = []
 
         counts = Counter()
 
-        def search(
-            index: int,
-        ):
+        def search(index: int):
 
-            if (
-                index
-                == len(self.orders)
-            ):
+            if index == len(self.orders):
 
                 results.append(
                     Counter(counts)
@@ -206,10 +235,18 @@ class SlittingOptimizer:
 
                 return
 
-            order = (
-                self.orders[index]
-            )
+            order = self.orders[index]
 
+            # IMPORTANT:
+            #
+            # Do NOT calculate the minimum strip count
+            # from the customer's required weight.
+            #
+            # Running length is common to all customer strips.
+            #
+            # Therefore even one strip can satisfy a large
+            # weight requirement by increasing running length.
+            #
             minimum_count = 1
 
             maximum_count = (
@@ -239,7 +276,7 @@ class SlittingOptimizer:
         return results
 
     # =========================================================
-    # NO FIXED COIL WIDTH
+    # NO FIXED COIL WEIGHT
     # =========================================================
 
     def _optimize_without_fixed_width(
@@ -247,14 +284,12 @@ class SlittingOptimizer:
     ) -> list[SlittingPlan]:
 
         customer_options = (
-            self._generate_customer_options_without_width()
+            self._generate_customer_options_fixed_width()
         )
 
-        plans = []
+        plans: list[SlittingPlan] = []
 
-        for customer_counts in (
-            customer_options
-        ):
+        for customer_counts in customer_options:
 
             customer_width = sum(
                 width * count
@@ -262,214 +297,58 @@ class SlittingOptimizer:
                 in customer_counts.items()
             )
 
+            if (
+                customer_width
+                > self.usable_width
+            ):
+                continue
+
+            remaining_width = (
+                self.usable_width
+                - customer_width
+            )
+
             stock_options = (
-                self._generate_stock_options_without_width(
-                    customer_width
+                self._generate_stock_options(
+                    remaining_width
                 )
             )
 
             for stock_counts in stock_options:
 
-                plans.append(
-                    self._create_plan(
-                        customer_counts,
-                        stock_counts,
-                    )
+                plan = self._create_plan(
+                    customer_counts,
+                    stock_counts,
                 )
+
+                if plan.running_length_m <= 0:
+                    continue
+
+                plans.append(plan)
 
         return plans
 
-    def _generate_customer_options_without_width(
-        self,
-    ) -> list[Counter[int]]:
-
-        results = []
-
-        counts = Counter()
-
-        # We limit the number of strips
-        # to a practical range.
-        #
-        # This is not the coil width.
-        # It is only a search boundary.
-
-        MAX_STRIPS_PER_ORDER = 15
-
-        def search(
-            index: int,
-        ):
-
-            if (
-                index
-                == len(self.orders)
-            ):
-
-                results.append(
-                    Counter(counts)
-                )
-
-                return
-
-            order = (
-                self.orders[index]
-            )
-
-            minimum_count = (
-                self._minimum_count_without_width(
-                    order
-                )
-            )
-
-            for count in range(
-                minimum_count,
-                MAX_STRIPS_PER_ORDER + 1,
-            ):
-
-                counts[
-                    order.width_mm
-                ] = count
-
-                search(
-                    index + 1
-                )
-
-                del counts[
-                    order.width_mm
-                ]
-
-        search(0)
-
-        return results
-
-    def _minimum_count_without_width(
-        self,
-        order,
-    ) -> int:
-
-        # At least one strip is required.
-
-        return 1
-
-    def _generate_stock_options_without_width(
-        self,
-        customer_width: int,
-    ) -> list[Counter[int]]:
-
-        results = []
-
-        counts = Counter()
-
-        # We only need to explore a reasonable
-        # number of stock strips.
-
-        MAX_STOCK_STRIPS = 3
-
-        def search(
-            index: int,
-            total_stock_width: int,
-        ):
-
-            if (
-                index
-                == len(self.stock_widths)
-            ):
-
-                results.append(
-                    Counter(counts)
-                )
-
-                return
-
-            width = (
-                self.stock_widths[index]
-            )
-
-            for count in range(
-                0,
-                MAX_STOCK_STRIPS + 1,
-            ):
-
-                counts[
-                    width
-                ] = count
-
-                search(
-                    index + 1,
-                    total_stock_width
-                    + width * count,
-                )
-
-                counts.pop(
-                    width,
-                    None,
-                )
-
-        search(
-            0,
-            0,
-        )
-
-        return results
-
     # =========================================================
-    # COMMON CALCULATIONS
+    # STOCK OPTIONS
     # =========================================================
-
-    def _minimum_count(
-        self,
-        width_mm: int,
-        required_weight_kg: float,
-    ) -> int:
-
-        if (
-            self.coil.weight_kg
-            and self.coil.weight_kg > 0
-            and self.coil.width_mm > 0
-        ):
-
-            strip_weight = (
-                self.coil.weight_kg
-                * width_mm
-                / self.coil.width_mm
-            )
-
-            required_count = (
-                required_weight_kg
-                / strip_weight
-            )
-
-            return max(
-                1,
-                int(
-                    required_count
-                    + 0.999999
-                ),
-            )
-
-        return 1
 
     def _generate_stock_options(
         self,
         remaining_width: int,
     ) -> list[Counter[int]]:
 
-        results = []
+        results: list[Counter[int]] = []
 
         counts = Counter()
 
-        stock_widths = (
-            self.stock_widths
-        )
+        stock_widths = self.stock_widths
 
         def search(
             index: int,
             remaining: int,
         ):
 
-            if (
-                index
-                == len(stock_widths)
-            ):
+            if index == len(stock_widths):
 
                 results.append(
                     Counter(counts)
@@ -477,9 +356,7 @@ class SlittingOptimizer:
 
                 return
 
-            width = (
-                stock_widths[index]
-            )
+            width = stock_widths[index]
 
             max_count = (
                 remaining
@@ -514,105 +391,101 @@ class SlittingOptimizer:
 
         return results
 
+    # =========================================================
+    # RUNNING LENGTH
+    # =========================================================
+
     def _calculate_running_length(
         self,
         customer_counts: Counter[int],
     ) -> float:
 
-        candidate_lengths = []
+        # =====================================================
+        # CASE 1:
+        # FIXED COIL WEIGHT
+        # =====================================================
+        #
+        # Example 3:
+        #
+        # Coil width  = 1250 mm
+        # Coil weight = 3000 kg
+        #
+        # Running length is determined by the physical coil.
+        #
 
-        for order in self.orders:
+        if (
+            self.coil.weight_kg is not None
+            and self.coil.weight_kg > 0
+        ):
 
-            count = (
-                customer_counts[
-                    order.width_mm
-                ]
-            )
-
-            if count <= 0:
-                continue
-
-            weight_per_meter = (
+            raw_weight_per_meter = (
                 self.weight_engine.weight_per_meter(
-                    order.width_mm
+                    self.coil.width_mm
                 )
             )
 
-            if weight_per_meter <= 0:
-                continue
+            if raw_weight_per_meter <= 0:
 
-            # Length required to produce exactly
-            # the customer's requested weight.
-            exact_length = (
-                order.required_weight_kg
-                / (
-                    count
-                    * weight_per_meter
-                )
+                return 0.0
+
+            return (
+                self.coil.weight_kg
+                / raw_weight_per_meter
             )
 
-            candidate_lengths.append(
-                exact_length
-            )
+        # =====================================================
+        # CASE 2:
+        # NO FIXED COIL WEIGHT
+        # =====================================================
+        #
+        # Examples 1 and 2.
+        #
+        # Running length is flexible.
+        #
+        # We calculate the length needed to produce the total
+        # customer demand from the selected customer widths.
+        #
+        # This allows the optimizer to compare different
+        # combinations instead of forcing every individual
+        # width to be satisfied independently.
+        #
 
-        if not candidate_lengths:
+        total_required_weight = sum(
+            order.required_weight_kg
+            for order in self.orders
+        )
+
+        total_customer_width = sum(
+            width * count
+            for width, count
+            in customer_counts.items()
+        )
+
+        if (
+            total_required_weight <= 0
+            or total_customer_width <= 0
+        ):
+
             return 0.0
 
-        # Test the lengths that would make each
-        # customer individually reach its target.
-        #
-        # The final scoring function decides which
-        # one is best.
-        best_length = candidate_lengths[0]
-        best_score = float("inf")
+        customer_weight_per_meter = (
+            self.weight_engine.weight_per_meter(
+                total_customer_width
+            )
+        )
 
-        for candidate_length in candidate_lengths:
+        if customer_weight_per_meter <= 0:
 
-            score = 0.0
+            return 0.0
 
-            for order in self.orders:
+        return (
+            total_required_weight
+            / customer_weight_per_meter
+        )
 
-                count = (
-                    customer_counts[
-                        order.width_mm
-                    ]
-                )
-
-                if count <= 0:
-                    continue
-
-                weight_per_meter = (
-                    self.weight_engine.weight_per_meter(
-                        order.width_mm
-                    )
-                )
-
-                produced_weight = (
-                    weight_per_meter
-                    * count
-                    * candidate_length
-                )
-
-                difference = abs(
-                    produced_weight
-                    - order.required_weight_kg
-                )
-
-                # Give preference to practical
-                # 250 kg steps.
-                score += (
-                    round(
-                        difference / 250
-                    )
-                    * 250
-                )
-
-            if score < best_score:
-
-                best_score = score
-                best_length = candidate_length
-
-        return best_length
+    # =========================================================
+    # CUSTOMER WEIGHTS
+    # =========================================================
 
     def _calculate_customer_weights(
         self,
@@ -620,9 +493,11 @@ class SlittingOptimizer:
         running_length: float,
     ) -> dict[int, float]:
 
-        customer_weights = {}
+        customer_weights: dict[int, float] = {}
 
-        for width, count in customer_counts.items():
+        for width, count in (
+            customer_counts.items()
+        ):
 
             weight_per_meter = (
                 self.weight_engine.weight_per_meter(
@@ -637,62 +512,20 @@ class SlittingOptimizer:
             )
 
         return customer_weights
-    def _customer_weight_deviation(
-        self,
-        plan: SlittingPlan,
-    ) -> float:
 
-        customer_weights = (
-            self._calculate_customer_weights(
-                plan.customer_widths,
-                plan.running_length_m,
-            )
-        )
+    # =========================================================
+    # CREATE PLAN
+    # =========================================================
 
-        total_deviation = 0.0
-
-        for order in self.orders:
-
-            required_weight = (
-                order.required_weight_kg
-            )
-
-            produced_weight = (
-                customer_weights.get(
-                    order.width_mm,
-                    0.0,
-                )
-            )
-
-            difference = abs(
-                produced_weight
-                - required_weight
-            )
-
-            # Treat 250 kg as the first practical
-            # tolerance step.
-            rounded_difference = (
-                round(
-                    difference / 250
-                )
-                * 250
-            )
-
-            total_deviation += (
-                rounded_difference
-            )
-
-        return total_deviation
-    
     def _create_plan(
         self,
         customer_counts: Counter[int],
         stock_counts: Counter[int],
     ) -> SlittingPlan:
 
-        # =========================================================
-        # 1. CALCULATE WIDTHS
-        # =========================================================
+        # =====================================================
+        # WIDTH CALCULATION
+        # =====================================================
 
         customer_width = sum(
             width * count
@@ -709,61 +542,42 @@ class SlittingOptimizer:
             + stock_width
         )
 
-        # =========================================================
-        # 2. COIL WIDTH / SCRAP WIDTH
-        # =========================================================
+        # =====================================================
+        # COIL / KERF / SCRAP WIDTH
+        # =====================================================
 
-        if self.has_fixed_coil_width:
+        raw_coil_width = int(
+            self.coil.width_mm
+        )
 
-            raw_coil_width = int(
-                self.coil.width_mm
-            )
+        kerf_width = int(
+            self.coil.kerf_mm
+        )
 
-            # Kerf/scrap is part of the coil.
-            #
-            # Example:
-            # Coil width = 1250
-            # Kerf/scrap = 10
-            # Usable width = 1240
-            #
-            # IMPORTANT:
-            # The frontend/backend currently uses 5 mm kerf.
-            # If your actual cutting loss is 10 mm,
-            # change kerf_mm in backend/main.py to 10.
+        # Physical relationship:
+        #
+        # COIL WIDTH
+        #     =
+        # PRODUCT WIDTH
+        #     + KERF
+        #     + UNUSED WIDTH
+        #
+        # Example:
+        #
+        # 1250 = 1244 + 5 + 1
+        #
+        unused_width = (
+            raw_coil_width
+            - product_width
+            - kerf_width
+        )
 
-            unused_width = (
-                raw_coil_width
-                - product_width
-            )
-
-            if unused_width < 0:
-                unused_width = 0
-
-            # Width actually available for produced material.
-            #
-            # This is the denominator used for calculating
-            # individual strip weights.
-            total_width_used = (
-                raw_coil_width
-                - self.coil.kerf_mm
-            )
-
-        else:
-
-            raw_coil_width = (
-                product_width
-                + self.coil.kerf_mm
-            )
-
+        if unused_width < 0:
             unused_width = 0
 
-            total_width_used = (
-                product_width
-            )
-
-        # =========================================================
-        # 3. RUNNING LENGTH
-        # =========================================================
+        # =====================================================
+        # RUNNING LENGTH
+        # =====================================================
 
         running_length = (
             self._calculate_running_length(
@@ -771,9 +585,35 @@ class SlittingOptimizer:
             )
         )
 
-        # =========================================================
-        # 4. RAW COIL WEIGHT
-        # =========================================================
+        if running_length <= 0:
+
+            return SlittingPlan(
+                customer_widths=Counter(
+                    customer_counts
+                ),
+                stock_widths=Counter(
+                    stock_counts
+                ),
+                product_width_mm=int(
+                    product_width
+                ),
+                kerf_width_mm=kerf_width,
+                unused_width_mm=int(
+                    unused_width
+                ),
+                running_length_m=0.0,
+                customer_weight_kg=0.0,
+                stock_weight_kg=0.0,
+                customer_overproduction_kg=0.0,
+                scrap_weight_kg=0.0,
+                total_produced_weight_kg=0.0,
+                total_raw_material_weight_kg=0.0,
+                total_runs=1,
+            )
+
+        # =====================================================
+        # RAW COIL WEIGHT
+        # =====================================================
 
         raw_material_weight = (
             self.weight_engine.weight_per_meter(
@@ -782,76 +622,50 @@ class SlittingOptimizer:
             * running_length
         )
 
-        # =========================================================
-        # 5. SCRAP WEIGHT
-        # =========================================================
+        # =====================================================
+        # SCRAP
+        # =====================================================
+        #
+        # IMPORTANT:
+        #
+        # Scrap consists of:
+        #
+        #     UNUSED WIDTH + KERF
+        #
+        # So kerf is included in both:
+        #
+        #     scrap_width
+        #     scrap_weight
+        #
+
+        scrap_width = (
+            unused_width
+            + kerf_width
+        )
 
         scrap_weight = (
             self.weight_engine.weight_per_meter(
-                unused_width
+                scrap_width
             )
             * running_length
         )
 
-        # =========================================================
-        # 6. TOTAL PRODUCED WEIGHT
-        # =========================================================
-        #
-        # Scrap is part of the raw coil.
-        #
-        # Therefore:
-        #
-        # Total Produced
-        # =
-        # Raw Coil Weight - Scrap Weight
-        #
-        # This is the weight available for customer + stock.
-        # =========================================================
+        # =====================================================
+        # PRODUCED MATERIAL
+        # =====================================================
 
         total_produced_weight = (
             raw_material_weight
-            - scrap_weight
+            
         )
 
-        # =========================================================
-        # 7. CUSTOMER WEIGHT
-        # =========================================================
-        #
-        # IMPORTANT:
-        #
-        # Do NOT calculate:
-        #
-        # weight_per_meter(width)
-        # × strips
-        # × running_length
-        #
-        # because that effectively uses the full 1250 mm
-        # coil width as the denominator.
-        #
-        # Instead:
-        #
-        # individual_weight =
-        # total_produced_weight
-        # ×
-        # (width × strips)
-        # /
-        # total_width_used
-        #
-        # Example:
-        #
-        # 40 × 3 = 120 mm
-        #
-        # total_width_used = 1240 mm
-        #
-        # total produced = 25833.33 kg
-        #
-        # 25833.33 × 120 / 1240
-        # = 2500 kg
-        # =========================================================
+        # =====================================================
+        # CUSTOMER WEIGHT
+        # =====================================================
 
         customer_weight = 0.0
 
-        if total_width_used > 0:
+        if product_width > 0:
 
             for width, count in (
                 customer_counts.items()
@@ -864,20 +678,20 @@ class SlittingOptimizer:
                 strip_weight = (
                     total_produced_weight
                     * strip_width
-                    / total_width_used
+                    / product_width
                 )
 
                 customer_weight += (
                     strip_weight
                 )
 
-        # =========================================================
-        # 8. STOCK WEIGHT
-        # =========================================================
+        # =====================================================
+        # STOCK WEIGHT
+        # =====================================================
 
         stock_weight = 0.0
 
-        if total_width_used > 0:
+        if product_width > 0:
 
             for width, count in (
                 stock_counts.items()
@@ -890,44 +704,47 @@ class SlittingOptimizer:
                 strip_weight = (
                     total_produced_weight
                     * strip_width
-                    / total_width_used
+                    / product_width
                 )
 
                 stock_weight += (
                     strip_weight
                 )
 
-        # =========================================================
-        # 9. CUSTOMER OVERPRODUCTION
-        # =========================================================
+        # =====================================================
+        # CUSTOMER OVERPRODUCTION
+        # =====================================================
 
         required_customer_weight = sum(
             order.required_weight_kg
             for order in self.orders
         )
 
-        overproduction = max(
+        customer_overproduction = max(
             0.0,
             customer_weight
             - required_customer_weight,
         )
 
-        # =========================================================
-        # 10. FINAL TOTAL
-        # =========================================================
+        # =====================================================
+        # TOTAL PRODUCED
+        # =====================================================
         #
-        # Customer + Stock should equal the produced portion
-        # of the coil.
-        # =========================================================
+        # This is ONLY customer + stock.
+        #
+        # Scrap is kept separately.
+        #
+        # Therefore:
+        #
+        # Customer + Stock + Scrap
+        #     =
+        # Raw coil weight
+        #
 
         total_produced = (
             customer_weight
             + stock_weight
         )
-
-        # =========================================================
-        # 11. RETURN PLAN
-        # =========================================================
 
         return SlittingPlan(
 
@@ -943,9 +760,7 @@ class SlittingOptimizer:
                 product_width
             ),
 
-            kerf_width_mm=int(
-                self.coil.kerf_mm
-            ),
+            kerf_width_mm=kerf_width,
 
             unused_width_mm=int(
                 unused_width
@@ -964,7 +779,7 @@ class SlittingOptimizer:
             ),
 
             customer_overproduction_kg=(
-                overproduction
+                customer_overproduction
             ),
 
             scrap_weight_kg=(
@@ -981,36 +796,156 @@ class SlittingOptimizer:
 
             total_runs=1,
         )
+    # =========================================================
+    # SCORING / RANKING
+    # =========================================================
+
     def _score_plan(
         self,
         plan: SlittingPlan,
     ) -> tuple:
 
-        customer_deviation = (
-            self._customer_weight_deviation(
-                plan
+        customer_weights = (
+            self._calculate_customer_weights(
+                plan.customer_widths,
+                plan.running_length_m,
             )
         )
 
+        total_shortfall = 0.0
+        total_overproduction = 0.0
+        total_absolute_deviation = 0.0
+        max_customer_deviation = 0.0
+
+        for order in self.orders:
+
+            produced = customer_weights.get(
+                order.width_mm,
+                0.0,
+            )
+
+            required = (
+                order.required_weight_kg
+            )
+
+            shortfall = max(
+                0.0,
+                required - produced,
+            )
+
+            overproduction = max(
+                0.0,
+                produced - required,
+            )
+
+            deviation = abs(
+                produced - required
+            )
+
+            total_shortfall += (
+                shortfall
+            )
+
+            total_overproduction += (
+                overproduction
+            )
+
+            total_absolute_deviation += (
+                deviation
+            )
+
+            max_customer_deviation = max(
+                max_customer_deviation,
+                deviation,
+            )
+
+        # =====================================================
+        # FIXED COIL WEIGHT
+        # =====================================================
+        #
+        # When coil weight is fixed, running length is fixed.
+        #
+        # Therefore it may be mathematically impossible to
+        # satisfy every customer order exactly.
+        #
+        # Example 3:
+        #
+        # 40 x 16  -> ~1536 kg
+        # 110 x 1  -> ~264 kg
+        # 144 x 2  -> ~691 kg
+        # 206 x 1  -> ~494 kg
+        #
+        # The 206 mm order is slightly below 500 kg.
+        #
+        # That is acceptable because adding another 206 mm
+        # strip creates a much larger deviation.
+        #
+
+        if (
+            self.coil.weight_kg is not None
+            and self.coil.weight_kg > 0
+        ):
+
+            return (
+
+                # 1. Minimize total customer deviation
+                total_absolute_deviation,
+
+                # 2. Minimize worst individual deviation
+                max_customer_deviation,
+
+                # 3. Minimize customer overproduction
+                total_overproduction,
+
+                # 4. Minimize customer shortfall
+                total_shortfall,
+
+                # 5. Minimize scrap
+                plan.scrap_weight_kg,
+
+                # 6. Minimize unused physical width
+                plan.unused_width_mm,
+
+                # 7. Prefer less raw material
+                plan.total_raw_material_weight_kg,
+
+                # 8. Prefer fewer stock sizes
+                plan.distinct_stock_sizes,
+
+                # 9. Prefer more stock material
+                -plan.stock_weight_kg,
+            )
+
+        # =====================================================
+        # FLEXIBLE COIL WEIGHT
+        # =====================================================
+
         return (
 
-            # 1. Keep each customer's production
-            # as close as possible to its requirement.
-            customer_deviation,
+            # 1. Minimize total customer deviation
+            total_absolute_deviation,
 
-            # 2. Minimize total customer
-            # overproduction.
-            plan.customer_overproduction_kg,
+            # 2. Minimize worst individual deviation
+            max_customer_deviation,
 
-            # 3. Minimize raw material weight.
-            plan.total_raw_material_weight_kg,
+            # 3. Minimize customer overproduction
+            total_overproduction,
 
-            # 4. Minimize unused width.
+            # 4. Minimize shortfall
+            total_shortfall,
+
+            # 5. Minimize scrap
+            plan.scrap_weight_kg,
+
+            # 6. Minimize unused width
             plan.unused_width_mm,
 
-            # 5. Prefer fewer stock sizes.
+            # 7. Minimize raw material
+            plan.total_raw_material_weight_kg,
+
+            # 8. Fewer stock sizes
             plan.distinct_stock_sizes,
 
-            # 6. Prefer more stock material.
+            # 9. More stock material
             -plan.stock_weight_kg,
         )

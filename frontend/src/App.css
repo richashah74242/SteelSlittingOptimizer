@@ -388,6 +388,8 @@ input {
   color: #b91c1c;
 
   font-size: 14px;
+
+  white-space: pre-wrap;
 }
 
 
@@ -478,12 +480,13 @@ input {
 
 
 /*
- * FOUR columns:
+ * FIVE columns:
  *
  * 1. Width
  * 2. Strips
  * 3. Total Width Used
- * 4. Weight
+ * 4. Required Weight
+ * 5. Actual Weight
  */
 
 .material-table-header,
@@ -494,12 +497,13 @@ input {
   grid-template-columns:
     1fr
     0.8fr
-    1.5fr
-    1fr;
+    1.4fr
+    1.3fr
+    1.2fr;
 
   align-items: center;
 
-  column-gap: 24px;
+  column-gap: 20px;
 
   padding-left: 20px;
 
@@ -684,7 +688,7 @@ input {
   .material-table-header,
   .material-table-row,
   .material-table-total {
-    min-width: 700px;
+    min-width: 800px;
   }
 }
 
