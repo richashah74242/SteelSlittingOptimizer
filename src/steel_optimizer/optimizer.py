@@ -200,10 +200,24 @@ class SlittingOptimizer:
                 ):
                     continue
 
-                plan = self._create_plan(
-                    customer_counts,
-                    stock_counts,
+                running_lengths = (
+                    self._calculate_running_lengths(
+                        customer_counts
+                    )
                 )
+
+                for running_length in running_lengths:
+
+                    plan = self._create_plan(
+                        customer_counts,
+                        stock_counts,
+                        running_length,
+                    )
+
+                    if plan.running_length_m <= 0:
+                        continue
+
+                    plans.append(plan)
 
                 # A plan must actually produce something.
                 if plan.running_length_m <= 0:
@@ -395,23 +409,14 @@ class SlittingOptimizer:
     # RUNNING LENGTH
     # =========================================================
 
-    def _calculate_running_length(
+    def _calculate_running_lengths(
         self,
         customer_counts: Counter[int],
-    ) -> float:
+    ) -> list[float]:
 
         # =====================================================
-        # CASE 1:
         # FIXED COIL WEIGHT
         # =====================================================
-        #
-        # Example 3:
-        #
-        # Coil width  = 1250 mm
-        # Coil weight = 3000 kg
-        #
-        # Running length is determined by the physical coil.
-        #
 
         if (
             self.coil.weight_kg is not None
@@ -425,35 +430,16 @@ class SlittingOptimizer:
             )
 
             if raw_weight_per_meter <= 0:
+                return []
 
-                return 0.0
-
-            return (
+            return [
                 self.coil.weight_kg
                 / raw_weight_per_meter
-            )
+            ]
 
         # =====================================================
-        # CASE 2:
         # NO FIXED COIL WEIGHT
         # =====================================================
-        #
-        # Examples 1 and 2.
-        #
-        # Running length is flexible.
-        #
-        # We calculate the length needed to produce the total
-        # customer demand from the selected customer widths.
-        #
-        # This allows the optimizer to compare different
-        # combinations instead of forcing every individual
-        # width to be satisfied independently.
-        #
-
-        total_required_weight = sum(
-            order.required_weight_kg
-            for order in self.orders
-        )
 
         total_customer_width = sum(
             width * count
@@ -461,12 +447,17 @@ class SlittingOptimizer:
             in customer_counts.items()
         )
 
-        if (
-            total_required_weight <= 0
-            or total_customer_width <= 0
-        ):
+        if total_customer_width <= 0:
+            return []
 
-            return 0.0
+        # -----------------------------------------------------
+        # 1. CURRENT / TOTAL-DEMAND SCENARIO
+        # -----------------------------------------------------
+
+        total_required_weight = sum(
+            order.required_weight_kg
+            for order in self.orders
+        )
 
         customer_weight_per_meter = (
             self.weight_engine.weight_per_meter(
@@ -475,14 +466,98 @@ class SlittingOptimizer:
         )
 
         if customer_weight_per_meter <= 0:
+            return []
 
-            return 0.0
+        # Running length required to produce
+        # the complete customer requirement.
+        #
+        # Scrap and stock are NOT ignored.
+        # They are additional material consumed
+        # from the raw coil at this same running length.
 
-        return (
+        total_demand_length = (
             total_required_weight
             / customer_weight_per_meter
         )
 
+        # -----------------------------------------------------
+        # 2. INDIVIDUAL ORDER SCENARIO
+        # -----------------------------------------------------
+        #
+        # Find the running length required by EACH
+        # customer order.
+        #
+        # Then take the maximum.
+        #
+        # This guarantees that the largest individual
+        # requirement is satisfied.
+        #
+
+        required_lengths = []
+
+        for order in self.orders:
+
+            count = customer_counts.get(
+                order.width_mm,
+                0,
+            )
+
+            if count <= 0:
+                continue
+
+            weight_per_meter = (
+                self.weight_engine.weight_per_meter(
+                    order.width_mm
+                )
+            )
+
+            if weight_per_meter <= 0:
+                continue
+
+            length_needed = (
+                order.required_weight_kg
+                / (
+                    weight_per_meter
+                    * count
+                )
+            )
+
+            required_lengths.append(
+                length_needed
+            )
+
+        if not required_lengths:
+            return [
+                total_demand_length
+            ]
+
+        individual_order_length = max(
+            required_lengths
+        )
+
+        # -----------------------------------------------------
+        # RETURN BOTH
+        # -----------------------------------------------------
+
+        lengths = [
+            individual_order_length,
+            total_demand_length,
+        ]
+
+        # Remove duplicates caused by identical
+        # running lengths.
+
+        unique_lengths = []
+
+        for length in lengths:
+
+            if not any(
+                abs(length - existing) < 0.000001
+                for existing in unique_lengths
+            ):
+                unique_lengths.append(length)
+
+        return unique_lengths
     # =========================================================
     # CUSTOMER WEIGHTS
     # =========================================================
@@ -521,6 +596,7 @@ class SlittingOptimizer:
         self,
         customer_counts: Counter[int],
         stock_counts: Counter[int],
+        running_length: float,
     ) -> SlittingPlan:
 
         # =====================================================
@@ -578,12 +654,6 @@ class SlittingOptimizer:
         # =====================================================
         # RUNNING LENGTH
         # =====================================================
-
-        running_length = (
-            self._calculate_running_length(
-                customer_counts
-            )
-        )
 
         if running_length <= 0:
 
@@ -665,7 +735,7 @@ class SlittingOptimizer:
 
         customer_weight = 0.0
 
-        if product_width > 0:
+        if raw_coil_width > 0:
 
             for width, count in (
                 customer_counts.items()
@@ -676,9 +746,9 @@ class SlittingOptimizer:
                 )
 
                 strip_weight = (
-                    total_produced_weight
+                    raw_material_weight
                     * strip_width
-                    / product_width
+                    / raw_coil_width
                 )
 
                 customer_weight += (
@@ -688,10 +758,9 @@ class SlittingOptimizer:
         # =====================================================
         # STOCK WEIGHT
         # =====================================================
-
         stock_weight = 0.0
 
-        if product_width > 0:
+        if raw_coil_width > 0:
 
             for width, count in (
                 stock_counts.items()
@@ -702,9 +771,9 @@ class SlittingOptimizer:
                 )
 
                 strip_weight = (
-                    total_produced_weight
+                    raw_material_weight
                     * strip_width
-                    / product_width
+                    / raw_coil_width
                 )
 
                 stock_weight += (
@@ -744,6 +813,7 @@ class SlittingOptimizer:
         total_produced = (
             customer_weight
             + stock_weight
+            +scrap_weight
         )
 
         return SlittingPlan(

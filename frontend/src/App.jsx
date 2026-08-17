@@ -152,8 +152,21 @@ function App() {
       ) +
       Number(
         scenario.stock_weight_kg || 0
+      ) +
+      Number(
+        scenario.scrap_weight_kg || 0
       );
+        const resultCoilWidth =
+        Number(
+          scenario.coil_width_mm ||
+            coilWidth ||
+            0
+        );
 
+      const totalCoilWeight =
+        Number(
+          scenario.raw_material_weight_kg || 0
+        );
     /*
      * ------------------------------------------------------------
      * MATERIAL ACTUAL WEIGHTS
@@ -169,11 +182,11 @@ function App() {
           item.strips;
 
         const weight =
-          totalWidthUsed > 0
+          resultCoilWidth > 0
             ? (
-                totalProducedWeight *
+                totalCoilWeight *
                 materialWidth /
-                totalWidthUsed
+                resultCoilWidth
               )
             : 0;
 
@@ -196,29 +209,24 @@ function App() {
      * Do NOT create a variable called "coilWidth"
      * here because "coilWidth" already exists as React state.
      */
-    const resultCoilWidth =
+
+    const kerfWidth =
       Number(
-        scenario.coil_width_mm ||
-          coilWidth ||
-          0
+        scenario.kerf_width_mm || 0
       );
 
+    const unusedWidth =
+      Number(
+        scenario.unused_width_mm || 0
+      );
     /*
      * ------------------------------------------------------------
      * SCRAP WIDTH
      * ------------------------------------------------------------
      */
-    const scrapWidth =
-      resultCoilWidth > 0
-        ? Math.max(
-            0,
-            resultCoilWidth -
-              totalWidthUsed
-          )
-        : Number(
-            scenario.unused_width_mm ||
-              0
-          );
+const scrapWidth =
+  kerfWidth +
+  unusedWidth;
 
     /*
      * ------------------------------------------------------------
@@ -230,20 +238,10 @@ function App() {
      * If backend does not provide it,
      * calculate it from coil weight.
      */
-    let scrapWeight = Number(
-      scenario.scrap_weight_kg || 0
-    );
-
-    if (
-      !scenario.scrap_weight_kg &&
-      coilWeight &&
-      resultCoilWidth > 0
-    ) {
-      scrapWeight =
-        Number(coilWeight) *
-        scrapWidth /
-        resultCoilWidth;
-    }
+ const scrapWeight =
+  Number(
+    scenario.scrap_weight_kg || 0
+  );
 
     /*
      * ------------------------------------------------------------
@@ -864,7 +862,9 @@ function App() {
                  * Actual total weight.
                  */
                 const totalActualWeight =
-                  totalProducedWeight;
+                  Number(
+                    scenario.raw_material_weight_kg || 0
+                  );
 
                 return (
 

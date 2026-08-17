@@ -144,15 +144,6 @@ def _plan_to_response(
     # =========================================================
     # REQUIRED WEIGHTS
     # =========================================================
-    #
-    # Create a lookup:
-    #
-    # 40  -> 1500 kg
-    # 110 -> 250 kg
-    # 206 -> 500 kg
-    #
-    # This is used only for displaying the required weight.
-    # =========================================================
 
     required_weights = {
         order.width_mm: order.required_weight_kg
@@ -239,13 +230,22 @@ def _plan_to_response(
             stock_material
         ),
 
+        # IMPORTANT:
+        # Product + kerf + unused = original coil width
         "coil_width_mm": (
             plan.product_width_mm
+            + plan.kerf_width_mm
             + plan.unused_width_mm
         ),
 
         "total_product_width_used_mm": (
             plan.product_width_mm
+        ),
+
+        # IMPORTANT:
+        # Send kerf to frontend.
+        "kerf_width_mm": (
+            plan.kerf_width_mm
         ),
 
         "running_length_m": round(
@@ -282,18 +282,13 @@ def _plan_to_response(
             2,
         ),
     }
-
-
 def _get_customer_width_weight(
     plan,
     width,
 ):
     """
-    Calculate the actual weight for one
-    customer width inside the selected plan.
-
-    Uses the same proportional-width logic
-    as the optimizer.
+    Calculate actual weight for one
+    customer width in the selected plan.
     """
 
     count = plan.customer_widths.get(
@@ -304,24 +299,16 @@ def _get_customer_width_weight(
     if count <= 0:
         return 0.0
 
-    total_width_used = (
-        plan.product_width_mm
-    )
-
-    if total_width_used <= 0:
-        return 0.0
-
-    # Customer + stock produced weight.
-    total_produced_weight = (
-        plan.total_produced_weight_kg
-    )
-
-    strip_width = (
-        width * count
+    width_weight_per_meter = (
+        width
+        / 1000.0
+        * 0.8
+        / 1000.0
+        * 7850.0
     )
 
     return (
-        total_produced_weight
-        * strip_width
-        / total_width_used
+        width_weight_per_meter
+        * count
+        * plan.running_length_m
     )
