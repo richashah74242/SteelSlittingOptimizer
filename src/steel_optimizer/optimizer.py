@@ -136,6 +136,22 @@ class SlittingOptimizer:
                 "No feasible plan found."
             )
 
+        # The physical scrap comprises the cutting kerf plus the
+        # remaining unused edge.  Only return plans in the allowed
+        # scrap-width range.
+        plans = [
+            plan
+            for plan in plans
+            if 4 <= plan.scrap_width_mm <= 12
+        ]
+
+        if not plans:
+
+            raise RuntimeError(
+                "No feasible plan found within the 4-12 mm "
+                "scrap-width limit."
+            )
+
         plans.sort(
             key=self._score_plan
         )

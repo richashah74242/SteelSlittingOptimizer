@@ -61,7 +61,7 @@ def optimize(
             thickness_mm=0.8,
             width_mm=request.coil_width_mm,
             weight_kg=request.coil_weight_kg,
-            kerf_mm=5,
+            kerf_mm=4,
         )
 
         # =====================================================
