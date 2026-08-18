@@ -1,9 +1,5 @@
 from pathlib import Path
 
-from .excel_handler import (
-    read_input_excel,
-)
-
 from .optimizer import (
     SlittingOptimizer,
 )

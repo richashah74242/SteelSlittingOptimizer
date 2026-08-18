@@ -49,6 +49,155 @@ function App() {
     setOrders(updatedOrders);
   }
 
+  function scenarioSignature(scenario) {
+    return JSON.stringify({
+      customer_material:
+        scenario.customer_material || [],
+      stock_material:
+        scenario.stock_material || [],
+      coil_width_mm:
+        scenario.coil_width_mm,
+      total_product_width_used_mm:
+        scenario.total_product_width_used_mm,
+      kerf_width_mm:
+        scenario.kerf_width_mm,
+      running_length_m:
+        scenario.running_length_m,
+      unused_width_mm:
+        scenario.unused_width_mm,
+    });
+  }
+
+  function roundWeight(value) {
+    return Number(value.toFixed(2));
+  }
+
+  function createHighestDemandScenario(scenario) {
+    const customerMaterial =
+      scenario.customer_material || [];
+
+    const governingMaterial =
+      customerMaterial.reduce(
+        (highest, item) =>
+          Number(item.required_weight_kg || 0) >
+          Number(
+            highest?.required_weight_kg || 0
+          )
+            ? item
+            : highest,
+        null
+      );
+
+    const governingWidth = Number(
+      governingMaterial?.width_mm || 0
+    );
+
+    const governingStrips = Number(
+      governingMaterial?.strips || 0
+    );
+
+    const governingRequiredWeight = Number(
+      governingMaterial?.required_weight_kg || 0
+    );
+
+    if (
+      governingWidth <= 0 ||
+      governingStrips <= 0 ||
+      governingRequiredWeight <= 0
+    ) {
+      return scenario;
+    }
+
+    // These match the backend values used for API requests.
+    const thicknessMm = 0.8;
+    const steelDensityKgPerM3 = 7850;
+    const weightPerMeter = (widthMm) =>
+      (widthMm / 1000) *
+      (thicknessMm / 1000) *
+      steelDensityKgPerM3;
+
+    const runningLength =
+      governingRequiredWeight /
+      (
+        weightPerMeter(governingWidth) *
+        governingStrips
+      );
+
+    const coilWidth = Number(
+      scenario.coil_width_mm || 0
+    );
+
+    if (coilWidth <= 0) {
+      return scenario;
+    }
+
+    const rawMaterialWeight =
+      weightPerMeter(coilWidth) * runningLength;
+
+    const customerWeight = customerMaterial.reduce(
+      (total, item) =>
+        total +
+        weightPerMeter(Number(item.width_mm || 0)) *
+          Number(item.strips || 0) *
+          runningLength,
+      0
+    );
+
+    const stockWeight = (
+      scenario.stock_material || []
+    ).reduce(
+      (total, item) =>
+        total +
+        weightPerMeter(Number(item.width_mm || 0)) *
+          Number(item.strips || 0) *
+          runningLength,
+      0
+    );
+
+    const scrapWidth =
+      Number(scenario.kerf_width_mm || 0) +
+      Number(scenario.unused_width_mm || 0);
+
+    const requiredCustomerWeight =
+      customerMaterial.reduce(
+        (total, item) =>
+          total +
+          Number(item.required_weight_kg || 0),
+        0
+      );
+
+    return {
+      ...scenario,
+      customer_material: customerMaterial.map(
+        (item) => ({
+          ...item,
+          actual_weight_kg: roundWeight(
+            weightPerMeter(
+              Number(item.width_mm || 0)
+            ) *
+              Number(item.strips || 0) *
+              runningLength
+          ),
+        })
+      ),
+      running_length_m: roundWeight(runningLength),
+      raw_material_weight_kg: roundWeight(
+        rawMaterialWeight
+      ),
+      customer_weight_kg: roundWeight(customerWeight),
+      stock_weight_kg: roundWeight(stockWeight),
+      scrap_weight_kg: roundWeight(
+        weightPerMeter(scrapWidth) * runningLength
+      ),
+      customer_overproduction_kg: roundWeight(
+        Math.max(
+          0,
+          customerWeight - requiredCustomerWeight
+        )
+      ),
+    };
+  }
+
   /*
    * ============================================================
    * CALCULATE DISPLAY MATERIAL
@@ -421,6 +570,38 @@ const scrapWidth =
         data.scenarios || [];
 
       /*
+       * When the coil weight is not supplied, the backend can
+       * return the same first scenario twice.  Keep the second
+       * result untouched, but use the highest customer requirement
+       * as the governing run length for the first display result.
+       */
+      const firstScenarioSignature =
+        receivedScenarios.length > 0
+          ? scenarioSignature(receivedScenarios[0])
+          : null;
+
+      const hasDuplicateFirstScenario =
+        firstScenarioSignature !== null &&
+        receivedScenarios
+          .slice(1)
+          .some(
+            (scenario) =>
+              scenarioSignature(scenario) ===
+              firstScenarioSignature
+          );
+
+      const displayScenarios =
+        payload.coil_weight_kg === null &&
+        hasDuplicateFirstScenario
+          ? [
+              createHighestDemandScenario(
+                receivedScenarios[0]
+              ),
+              ...receivedScenarios.slice(1),
+            ]
+          : receivedScenarios;
+
+      /*
        * ----------------------------------------------------------
        * SORT SCENARIOS
        * ----------------------------------------------------------
@@ -448,7 +629,7 @@ const scrapWidth =
        * Scenario B will be Scenario 1.
        */
       const sortedScenarios =
-        receivedScenarios
+        displayScenarios
           .map((scenario) => {
             const display =
               getProducedMaterial(
